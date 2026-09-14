@@ -1,0 +1,111 @@
+# id: faq_activities | category: activities
+
+Q: How do I view available activities?
+A: Open the application to see all available activities. Availability is shown in real time, so you only see activities that still have open slots.
+
+Q: How do I choose an activity?
+A: Browse the list of available activities and select your preferred activity before proceeding to booking.
+
+Q: How do I book an activity?
+A: Select an available activity, choose your preferred date and time, and proceed with the booking.
+
+Q: Can I book an activity for someone else?
+A: Yes, you can make a booking for another person by providing the required guest details during the booking process.
+
+Q: Can I change the date or time of my activity?
+A: Changes to the activity date or time depend on availability and the applicable booking policy. Check the booking details in the application for available options.
+
+# id: faq_booking | category: booking
+
+Q: How do I make a booking?
+A: Select the activity you want, choose an available date and time, provide the required information, and confirm the booking.
+
+Q: How do I know if my booking was successful?
+A: After a successful booking, a confirmation will be displayed in the application. Your booking details will also be available in the application.
+
+Q: Where can I find my booking details?
+A: Open the application and go to your bookings to view your booking details, including the activity, date, time, and booking status.
+
+Q: Can I make multiple bookings?
+A: Yes, you can make multiple bookings as long as the selected activities have available slots.
+
+Q: What happens if an activity is fully booked?
+A: If an activity has no available slots, it will not be available for booking.
+
+# id: faq_cancellation | category: cancellation
+
+Q: Can I cancel my booking?
+A: Bookings can be cancelled according to the applicable cancellation policy.
+
+Q: How do I cancel my booking?
+A: Open your booking details in the application and select the cancellation option if it is available.
+
+Q: Will I receive a refund after cancelling my booking?
+A: Refund eligibility depends on the applicable cancellation policy and the conditions associated with the booking.
+
+Q: How long does a refund take?
+A: Refund processing time depends on the applicable refund policy and payment method.
+
+Q: Can I cancel an activity after it has started?
+A: Cancellation after the activity has started depends on the applicable cancellation policy.
+
+# id: faq_availability | category: availability
+
+Q: How can I check activity availability?
+A: Open the activity section in the application to see activities that currently have available slots.
+
+Q: Is activity availability updated in real time?
+A: Yes, activity availability is shown in real time, so the displayed availability reflects the currently available slots.
+
+Q: Why can't I see a particular activity?
+A: An activity may not be displayed if it is unavailable, fully booked, or not currently offered.
+
+# id: faq_payment | category: payment
+
+Q: How do I pay for an activity?
+A: Select an available activity, proceed through the booking process, and complete the payment using the payment method available in the application.
+
+Q: What payment methods are supported?
+A: The available payment methods are displayed during the payment step of the booking process.
+
+Q: What should I do if my payment fails?
+A: Check that your payment details are correct and try again. If the payment continues to fail, use another available payment method or contact support.
+
+Q: Was I charged if my payment failed?
+A: If you believe you were charged despite a failed payment, check your transaction history and contact support with the relevant booking or transaction details.
+
+# id: faq_booking_confirmation | category: confirmation
+
+Q: Where can I find my booking confirmation?
+A: Your booking confirmation is available in the application after a successful booking.
+
+Q: What information is included in a booking confirmation?
+A: The booking confirmation includes the relevant booking details such as the activity, date, time, and booking status.
+
+Q: What should I do if I do not receive a booking confirmation?
+A: Check your bookings section in the application to verify whether the booking was created successfully. If the booking is not shown, contact support.
+
+# id: faq_support | category: support
+
+Q: How can I contact support?
+A: Use the support or help section available in the application to contact customer support.
+
+Q: What information should I provide when contacting support?
+A: Provide relevant details such as your booking ID, activity name, booking date, and a description of the issue.
+
+Q: What should I do if I have a problem with my booking?
+A: Check your booking details first. If the issue cannot be resolved through the application, contact customer support with your booking information.
+
+# id: faq_general | category: general
+
+Q: What information can I get about an activity?
+A: The application provides information about available activities and their relevant booking details.
+
+Q: How do I find a specific activity?
+A: Browse the available activities and use the available search or filtering options to find the activity you are looking for.
+
+Q: Can I book an unavailable activity?
+A: No. Only activities with available slots can be booked.
+
+Q: Where can I see the status of my booking?
+A: You can view the current status of your booking from the bookings section of the application.
