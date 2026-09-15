@@ -1,0 +1,131 @@
+# id: hotel_search | category: hotel_search
+
+Q: How do I search for a hotel?
+A: Enter your destination, check-in date, check-out date, and number of guests in the search form, then browse the available hotels.
+
+Q: Can I filter hotels by price range?
+A: Yes, you can filter hotels by price range, star rating, amenities, and location using the filter options available on the search results page.
+
+Q: How do I find hotels near a specific location?
+A: Enter the location or landmark in the search bar and the results will show hotels near that area.
+
+Q: Can I search for hotels by star rating?
+A: Yes, you can filter search results by star rating to find hotels that match your preference.
+
+Q: Are the hotel prices shown per night or for the full stay?
+A: Prices are shown per night by default. The total cost for the full stay is displayed before you confirm the booking.
+
+# id: hotel_booking | category: hotel_booking
+
+Q: How do I book a hotel room?
+A: Search for your destination and dates, select a hotel, choose your room type, provide guest details, and complete the payment to confirm your booking.
+
+Q: Can I book a hotel for someone else?
+A: Yes, you can book a hotel for another guest by entering their details during the booking process.
+
+Q: How do I know if my hotel booking was successful?
+A: A booking confirmation will be shown in the application after a successful booking. Your booking details will also appear in the bookings section.
+
+Q: Can I request an early check-in or late check-out?
+A: Early check-in and late check-out requests depend on the hotel's availability and policy. You can add a special request during the booking process.
+
+Q: Can I add special requests to my hotel booking?
+A: Yes, you can add special requests such as room preferences, dietary requirements, or accessibility needs during the booking process. Fulfilment is subject to hotel availability.
+
+# id: hotel_cancellation | category: hotel_cancellation
+
+Q: Can I cancel my hotel booking?
+A: Hotel bookings can be cancelled according to the cancellation policy applicable to your booking. Check your booking details for the policy.
+
+Q: How do I cancel my hotel booking?
+A: Open your booking in the application, go to the booking details, and select the cancellation option if it is available.
+
+Q: Will I get a refund if I cancel my hotel booking?
+A: Refund eligibility depends on the cancellation policy associated with your booking. Free cancellation bookings are refunded in full if cancelled within the allowed period.
+
+Q: What is a non-refundable hotel booking?
+A: A non-refundable booking means no refund is issued if the booking is cancelled. These bookings are typically offered at a lower rate.
+
+Q: How long does a hotel refund take?
+A: Refund processing time depends on the applicable policy and your payment method. It typically takes a few business days.
+
+# id: hotel_rooms | category: hotel_rooms
+
+Q: What room types are available?
+A: Available room types vary by hotel and may include standard, deluxe, suite, and family rooms. Room options are displayed during the booking process.
+
+Q: How do I choose a specific room type?
+A: After selecting a hotel, you will see a list of available room types with details and pricing. Select the room type that suits your needs.
+
+Q: Can I request a specific floor or room number?
+A: Specific floor or room number requests can be added as a special request during booking. Fulfilment is subject to hotel availability and cannot be guaranteed.
+
+Q: How many guests can stay in one room?
+A: The maximum occupancy per room is shown in the room details. You can also filter search results by number of guests.
+
+Q: Are extra beds available?
+A: Extra bed availability depends on the hotel and room type. You can request an extra bed during the booking process, subject to hotel availability.
+
+# id: hotel_payment | category: hotel_payment
+
+Q: What payment methods are accepted for hotel bookings?
+A: Accepted payment methods are displayed during the payment step of the booking process.
+
+Q: When will I be charged for my hotel booking?
+A: The charge timing depends on the booking type. Some bookings are charged immediately, while others are charged at check-in. This is shown before you confirm the booking.
+
+Q: What should I do if my hotel payment fails?
+A: Verify your payment details and try again. If the problem persists, try a different payment method or contact support.
+
+Q: Can I pay for a hotel at the property instead of online?
+A: Pay-at-property options are available for some hotels and room types. This will be indicated during the booking process.
+
+# id: hotel_checkin | category: hotel_checkin
+
+Q: What is the standard check-in time?
+A: Standard check-in times vary by hotel and are shown in the hotel details. Early check-in may be available on request.
+
+Q: What is the standard check-out time?
+A: Standard check-out times vary by hotel and are shown in the hotel and booking details. Late check-out may be available on request.
+
+Q: What do I need to present at check-in?
+A: Bring a valid photo ID and your booking confirmation. Some hotels may also require the payment card used for the booking.
+
+Q: Can I check in online?
+A: Online or digital check-in availability depends on the hotel. If available, this option will be shown in your booking details before arrival.
+
+# id: hotel_amenities | category: hotel_amenities
+
+Q: How do I find out what amenities a hotel offers?
+A: Hotel amenities are listed on the hotel details page. Common amenities include Wi-Fi, parking, pool, gym, and breakfast.
+
+Q: Is breakfast included in the room rate?
+A: Breakfast inclusion depends on the rate you select. Rates that include breakfast are clearly indicated during the booking process.
+
+Q: Is Wi-Fi available at the hotel?
+A: Wi-Fi availability is shown in the hotel amenities. Free Wi-Fi hotels are indicated in the search results.
+
+Q: Is parking available at the hotel?
+A: Parking availability and charges are listed in the hotel amenities. Some hotels offer free parking while others charge a fee.
+
+# id: hotel_confirmation | category: hotel_confirmation
+
+Q: Where can I find my hotel booking confirmation?
+A: Your booking confirmation is available in the bookings section of the application after a successful booking.
+
+Q: What details are included in a hotel booking confirmation?
+A: The confirmation includes the hotel name, room type, check-in and check-out dates, guest name, booking reference, and total cost.
+
+Q: What should I do if I did not receive a hotel booking confirmation?
+A: Check the bookings section in the application to verify whether the booking was created. If it is not shown, contact support with your booking details.
+
+# id: hotel_support | category: hotel_support
+
+Q: How do I contact support for a hotel booking issue?
+A: Use the support or help section in the application to reach customer support. Provide your booking reference and a description of the issue.
+
+Q: What should I do if there is a problem with my hotel room?
+A: Contact the hotel directly in the first instance. If the issue is not resolved, contact customer support through the application with your booking reference.
+
+Q: Can I modify my hotel booking after it is confirmed?
+A: Modifications to confirmed bookings depend on the hotel's policy and availability. Check your booking details for modification options or contact support.
