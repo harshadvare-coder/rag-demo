@@ -9,23 +9,9 @@ from fastapi import FastAPI, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from agents.activity_agent import ActivityAgent
-from agents.booking_agent import BookingAgent
-from agents.orchestrator import Orchestrator
+from agents import activity_agent, hotel_agent, orchestrator
 
-load_dotenv()  # must run before reading env vars
-
-activity_agent = ActivityAgent()
-booking_agent  = BookingAgent(
-    llm_api_url=os.getenv("LLM_API_URL", ""),
-    llm_api_key=os.getenv("LLM_API_KEY", ""),
-    llm_model_id=os.getenv("LLM_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
-)
-orchestrator   = Orchestrator(
-    llm_api_url=os.getenv("LLM_API_URL", ""),
-    llm_api_key=os.getenv("LLM_API_KEY", ""),
-    llm_model_id=os.getenv("LLM_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
-)
+load_dotenv()
 
 
 # =========================================================
@@ -69,7 +55,7 @@ os.makedirs(HISTORY_DIR, exist_ok=True)
 MAX_HISTORY = int(os.getenv("MAX_HISTORY", "20"))
 
 # Agents that have their own separate history track
-AGENT_KEYS = ("orchestrator", "activity", "booking", "general")
+AGENT_KEYS = ("orchestrator", "activity", "hotel", "general")
 
 
 def session_dir(session_id: str) -> str:
@@ -131,7 +117,7 @@ def get_embedding(text: str):
 def startup():
     print("Starting application...")
     activity_agent.vectorize_faqs(get_embedding)
-    booking_agent.vectorize_faqs(get_embedding)
+    hotel_agent.vectorize_faqs(get_embedding)
     print("Application is ready.")
 
 
@@ -162,45 +148,72 @@ def chat(
     # Load per-agent histories
     orchestrator_history = load_history(session_id, "orchestrator")
     activity_history     = load_history(session_id, "activity")
-    booking_history      = load_history(session_id, "booking")
+    hotel_history        = load_history(session_id, "hotel")
     general_history      = load_history(session_id, "general")
 
     print(
         f"\nSession: {session_id} | "
         f"orchestrator={len(orchestrator_history)} "
         f"activity={len(activity_history)} "
-        f"booking={len(booking_history)} "
+        f"hotel={len(hotel_history)} "
         f"general={len(general_history)} | "
         f"Question: {question}"
     )
 
     # ----------------------------------------------------------
-    # 1. Short-circuit: if there's an active mid-booking, always
-    #    route to the booking agent without asking the orchestrator.
-    #    This prevents plain inputs (names, dates, "yes/no") from
-    #    being misrouted to general when the user is mid-flow.
+    # 1. Orchestrator — classify and route (with its own history)
+    #    The orchestrator only builds the payload and parses the
+    #    response; the actual HTTP call is made here.
     # ----------------------------------------------------------
-    # Short-circuit: if there's a saved booking session that is mid-flow,
-    # always route to the booking agent so plain inputs (names, dates,
-    # "yes/no") aren't misrouted by the LLM orchestrator.
-    # A session is "active" when a booking file exists AND the step is
-    # not at a terminal state.
-    _booking_file        = booking_agent._booking_path(session_id)
-    active_booking_state = booking_agent.load_booking_state(session_id)
-    active_booking_step  = active_booking_state.get("step", "destination")
-    booking_is_active    = (
-        os.path.exists(_booking_file)
-        and active_booking_step not in ("confirmed", "cancelled")
+
+    routing_payload = orchestrator.build_payload(
+        question=question,
+        history=orchestrator_history,
+        llm_model_id=LLM_MODEL_ID,
     )
 
-    if booking_is_active:
-        route = "booking"
-        print(f"[Orchestrator] Bypassed — active booking step='{active_booking_step}', routing to 'booking'")
-    else:
-        # ----------------------------------------------------------
-        # Normal orchestrator LLM call
-        # ----------------------------------------------------------
-        route = orchestrator.classify(question, orchestrator_history)
+    routing_headers = {
+        "api-key": LLM_API_KEY,
+        "Authorization": f"Bearer {LLM_API_KEY}",
+        "Accept": "text/event-stream",
+        "Content-Type": "application/json"
+    }
+
+    route_raw = ""
+    try:
+        with httpx.stream(
+            "POST",
+            LLM_API_URL,
+            headers=routing_headers,
+            json=routing_payload,
+            timeout=30
+        ) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                raw = line[len("data:"):].strip()
+                if raw == "[DONE]":
+                    break
+                try:
+                    event_data = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                delta = None
+                if event_data.get("type") == "content_block_delta":
+                    delta = event_data.get("delta", {}).get("text", "")
+                elif "text" in event_data:
+                    delta = event_data["text"]
+                elif "content" in event_data:
+                    delta = event_data["content"]
+                elif "message" in event_data:
+                    delta = event_data["message"]
+                if delta:
+                    route_raw += delta
+    except Exception as e:
+        print(f"[Orchestrator] API call failed: {e}. Defaulting to 'general'.")
+
+    route = orchestrator.parse_route(route_raw) if route_raw else "general"
 
     # Save orchestrator turn
     orchestrator_history.append({"role": "user",      "content": question})
@@ -210,51 +223,17 @@ def chat(
     print(f"[Orchestrator] Route selected: {route}")
 
     # ----------------------------------------------------------
-    # 2. Booking agent — state-machine, no RAG / LLM call needed
-    # ----------------------------------------------------------
-
-    if route == "booking":
-        result = booking_agent.process_turn(
-            session_id,
-            question,
-            history=booking_history,
-            get_embedding_fn=get_embedding,
-            top_k=RETRIEVAL_TOP_K,
-            threshold=SIMILARITY_THRESHOLD,
-        )
-        reply_text  = result["reply"]
-        book_state  = result["state"]
-        rag_sources = result.get("sources", [])
-
-        # Persist conversation history for the booking agent
-        booking_history.append({"role": "user",      "content": question})
-        booking_history.append({"role": "assistant",  "content": reply_text})
-        save_history(session_id, "booking", booking_history)
-
-        print(f"[BookingAgent] Step={book_state['step']} | confirmed={result['confirmed']} | cancelled={result['cancelled']}")
-
-        def stream_booking() -> Generator[str, None, None]:
-            yield f"event: session\ndata: {json.dumps({'session_id': session_id})}\n\n"
-            yield f"event: route\ndata: {json.dumps({'agent': 'booking'})}\n\n"
-            yield f"event: sources\ndata: {json.dumps(rag_sources)}\n\n"
-            yield f"event: booking_state\ndata: {json.dumps(book_state)}\n\n"
-            yield f"event: answer\ndata: {json.dumps({'text': reply_text})}\n\n"
-            yield "event: done\ndata: {}\n\n"
-
-        return StreamingResponse(
-            stream_booking(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-        )
-
-    # ----------------------------------------------------------
-    # 3. Select FAQ agent and its history based on route
+    # 2. Select agent and its history based on route
     # ----------------------------------------------------------
 
     if route == "activity":
         agent         = activity_agent
         agent_history = activity_history
         agent_key     = "activity"
+    elif route == "hotel":
+        agent         = hotel_agent
+        agent_history = hotel_history
+        agent_key     = "hotel"
     else:
         # General / conversational — no RAG
         agent         = None
@@ -262,7 +241,7 @@ def chat(
         agent_key     = "general"
 
     # ----------------------------------------------------------
-    # 4. Embed question and retrieve from the selected agent
+    # 3. Embed question and retrieve from the selected agent
     # ----------------------------------------------------------
 
     query_embedding = get_embedding(question)
@@ -280,7 +259,7 @@ def chat(
         ids = result["ids"]
 
     # ----------------------------------------------------------
-    # 5. Build context message for LLM
+    # 4. Build context message for LLM
     # ----------------------------------------------------------
 
     if documents:
@@ -300,7 +279,7 @@ def chat(
         )
 
     # ----------------------------------------------------------
-    # 6. Pick system prompt from selected agent (or default)
+    # 5. Pick system prompt from selected agent (or default)
     # ----------------------------------------------------------
 
     if agent is not None:
@@ -310,7 +289,7 @@ def chat(
             system_prompt = f.read().strip()
 
     # ----------------------------------------------------------
-    # 7. Sources payload for frontend
+    # 6. Sources payload for frontend
     # ----------------------------------------------------------
 
     sources_payload = json.dumps([
@@ -329,7 +308,7 @@ def chat(
     save_history(session_id, agent_key, agent_history)
 
     # ----------------------------------------------------------
-    # 8. Stream LLM response
+    # 7. Stream LLM response
     # ----------------------------------------------------------
 
     def stream_llm() -> Generator[str, None, None]:
@@ -439,30 +418,6 @@ def chat(
 
 
 # =========================================================
-# Booking State
-# =========================================================
-
-@app.get("/booking/{session_id}")
-def get_booking_state(session_id: str):
-    """Return the current hotel booking state for a session."""
-    state = booking_agent.load_booking_state(session_id)
-    return {"session_id": session_id, "booking": state}
-
-
-@app.delete("/booking/{session_id}")
-def cancel_booking(session_id: str):
-    """
-    Clear / cancel the in-progress booking for a session.
-    Also clears the booking chat history.
-    """
-    booking_agent.clear_booking_state(session_id)
-    path = history_path(session_id, "booking")
-    if os.path.exists(path):
-        os.remove(path)
-    return {"session_id": session_id, "booking_cleared": True}
-
-
-# =========================================================
 # History
 # =========================================================
 
@@ -525,6 +480,6 @@ def health():
     return {
         "status": "ok",
         "activity_faq_count": activity_agent.get_collection().count(),
-        "booking_faq_count": booking_agent.get_collection().count(),
+        "hotel_faq_count": hotel_agent.get_collection().count(),
         "saved_sessions": len(unique_sessions)
     }
