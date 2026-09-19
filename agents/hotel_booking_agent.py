@@ -6,8 +6,10 @@ from datetime import datetime, date
 import httpx
 import chromadb
 
+from core.history import load_history, save_history
+
 # =========================================================
-# Booking Agent
+# Hotel Booking Agent
 #
 # Pure infrastructure — zero business logic.
 # Everything the LLM should do is in booking_prompt.txt.
@@ -21,7 +23,7 @@ import chromadb
 # =========================================================
 
 
-class BookingAgent:
+class HotelBookingAgent:
     def __init__(
         self,
         faq_file: str        = "hotel_faq.txt",
@@ -416,29 +418,25 @@ class BookingAgent:
         self,
         session_id:      str,
         user_message:    str,
-        history:         list | None = None,
         get_embedding_fn             = None,
         top_k:           int         = 3,
         threshold:       float       = 0.5,
     ):
         """
-        Generator that yields event dicts for the caller to forward as SSE:
-          {"type": "sources",       "data": [...]}
-          {"type": "delta",         "data": "<text chunk>"}  — one per LLM token
-          {"type": "booking_state", "data": {...}}
-          {"type": "done"}
+        Generator that yields SSE-formatted strings, consistent with other agents:
+          event: sources  — FAQ sources retrieved
+          event: answer   — one LLM token chunk
+          event: booking_state — current booking state after LLM reply
+          event: done     — stream complete
 
+        Loads and saves booking history internally.
         State is parsed from the accumulated reply and persisted after
-        the stream completes. No business logic here.
+        the stream completes.
         """
-        if history is None:
-            history = []
+        history = load_history(session_id, "booking")
+        state   = self.load_booking_state(session_id)
 
-        state = self.load_booking_state(session_id)
-
-        # ---- RAG retrieval — always run so FAQ context is available ----
-        # The prompt's INTENT PRIORITY section ensures the LLM ignores FAQ
-        # context when the user expresses booking intent.
+        # ---- RAG retrieval ----
         faq_context = ""
         sources     = []
 
@@ -460,63 +458,58 @@ class BookingAgent:
                 ]
 
                 print(
-                    f"[BookingAgent] RAG: {len(sources)} FAQ(s) retrieved"
-                    if sources else "[BookingAgent] RAG: no matches above threshold"
+                    f"[HotelBookingAgent] RAG: {len(sources)} FAQ(s) retrieved"
+                    if sources else "[HotelBookingAgent] RAG: no matches above threshold"
                 )
             except Exception as exc:
-                print(f"[BookingAgent] RAG failed (continuing without context): {exc}")
+                print(f"[HotelBookingAgent] RAG failed (continuing without context): {exc}")
 
-        yield {"type": "sources", "data": sources}
+        yield f"event: sources\ndata: {json.dumps(sources)}\n\n"
 
-        # ---- Stream LLM — accumulate full reply for state parsing ----
-        # The LLM appends a <booking_state>…</booking_state> block at the end
-        # of every reply. We must NOT forward those tokens to the client.
-        # Strategy: stream normally until we see the opening tag, then buffer
-        # the rest silently. The full raw reply is kept for state parsing.
+        # ---- Stream LLM — strip <booking_state> block before forwarding ----
         system_prompt  = self._build_system_prompt(state, faq_context=faq_context)
         full_raw_reply = ""
-        buffer         = ""          # holds text once the state tag starts
-        tag_started    = False       # True once <booking_state> detected
+        buffer         = ""
+        tag_started    = False
 
         for delta in self._stream_llm(system_prompt, history, user_message):
             full_raw_reply += delta
 
             if tag_started:
-                # Already past the tag — accumulate silently, don't yield
                 buffer += delta
                 continue
 
-            # Check if this delta (combined with any previous partial text)
-            # contains or starts the opening tag
-            check = buffer + delta
+            check   = buffer + delta
             tag_pos = check.find("<booking_state>")
 
             if tag_pos == -1:
-                # No tag yet — safe to yield everything accumulated so far
-                # but keep a small trailing buffer to catch a split tag
                 safe_len = max(0, len(check) - len("<booking_state>") + 1)
-                to_yield  = check[:safe_len]
-                buffer    = check[safe_len:]
+                to_yield = check[:safe_len]
+                buffer   = check[safe_len:]
                 if to_yield:
-                    yield {"type": "delta", "data": to_yield}
+                    yield f"event: answer\ndata: {json.dumps({'text': to_yield})}\n\n"
             else:
-                # Tag found — yield everything before it, buffer the rest
-                before_tag = check[:tag_pos]
-                buffer     = check[tag_pos:]
+                before_tag  = check[:tag_pos]
+                buffer      = check[tag_pos:]
                 tag_started = True
                 if before_tag:
-                    yield {"type": "delta", "data": before_tag}
+                    yield f"event: answer\ndata: {json.dumps({'text': before_tag})}\n\n"
 
-        # Flush any remaining safe buffer (only if tag never appeared)
+        # Flush remaining buffer if tag never appeared
         if not tag_started and buffer:
-            yield {"type": "delta", "data": buffer}
+            yield f"event: answer\ndata: {json.dumps({'text': buffer})}\n\n"
 
-        # ---- Parse state from full reply AFTER stream completes ----
+        # ---- Parse and persist state ----
         clean_reply, updates = self._parse_state_update(full_raw_reply)
         state                = self._apply_updates(state, updates)
         self.save_booking_state(session_id, state)
 
-        print(f"[BookingAgent] session={session_id} step={state['step']} updates={updates}")
+        print(f"[HotelBookingAgent] session={session_id} step={state['step']} updates={updates}")
 
-        yield {"type": "booking_state", "data": state}
-        yield {"type": "done", "clean_reply": clean_reply}
+        # Save booking history
+        history.append({"role": "user",      "content": user_message})
+        history.append({"role": "assistant",  "content": clean_reply})
+        save_history(session_id, "booking", history)
+
+        yield f"event: booking_state\ndata: {json.dumps(state)}\n\n"
+        yield "event: done\ndata: {}\n\n"

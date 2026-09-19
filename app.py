@@ -1,158 +1,59 @@
 import json
 import os
-import threading
 import uuid
-from typing import Generator, Optional
+from typing import Optional
 
-import httpx
-from dotenv import load_dotenv
 from fastapi import FastAPI, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agents.activity_agent import ActivityAgent
-from agents.booking_agent import BookingAgent
+from agents.general_agent import GeneralAgent
+from agents.hotel_booking_agent import HotelBookingAgent
+from core.config import LLM_API_URL, LLM_API_KEY, LLM_MODEL_ID, HISTORY_DIR, AGENT_KEYS
+from core.embedding import get_embedding
+from core.history import load_history, history_path, session_dir
 from agents.orchestrator import Orchestrator
-
-load_dotenv()  # must run before reading env vars
-
-activity_agent = ActivityAgent()
-booking_agent  = BookingAgent(
-    llm_api_url=os.getenv("LLM_API_URL", ""),
-    llm_api_key=os.getenv("LLM_API_KEY", ""),
-    llm_model_id=os.getenv("LLM_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
-)
-orchestrator   = Orchestrator(
-    llm_api_url=os.getenv("LLM_API_URL", ""),
-    llm_api_key=os.getenv("LLM_API_KEY", ""),
-    llm_model_id=os.getenv("LLM_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"),
-)
-
+from core.startup import run_vectorization
 
 # =========================================================
-# Configuration
+# Agent singletons
 # =========================================================
 
-EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL")
-EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY")
-
-LLM_API_URL = os.getenv("LLM_API_URL")
-LLM_API_KEY = os.getenv("LLM_API_KEY")
-
-LLM_MODEL_ID = os.getenv(
-    "LLM_MODEL_ID",
-    "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+activity_agent      = ActivityAgent()
+general_agent       = GeneralAgent()
+hotel_booking_agent = HotelBookingAgent(
+    llm_api_url=LLM_API_URL,
+    llm_api_key=LLM_API_KEY,
+    llm_model_id=LLM_MODEL_ID,
+)
+orchestrator = Orchestrator(
+    llm_api_url=LLM_API_URL,
+    llm_api_key=LLM_API_KEY,
+    llm_model_id=LLM_MODEL_ID,
 )
 
-RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "5"))
-SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.5"))
-
-LLM_TOP_P = float(os.getenv("LLM_TOP_P", "0.9"))
-LLM_TOP_K = int(os.getenv("LLM_TOP_K", "50"))
-LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.5"))
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1024"))
-
-
 # =========================================================
-# Embedding API
-# =========================================================
-
-def get_embedding(text: str):
-    headers = {
-        "api-key": EMBEDDING_API_KEY,
-        "Content-Type": "application/json"
-    }
-    payload = {"text": text}
-
-    response = httpx.post(
-        EMBEDDING_API_URL,
-        headers=headers,
-        json=payload,
-        timeout=60
-    )
-    response.raise_for_status()
-    data = response.json()
-    print("Embedding API response:", data)
-    return data["embedding"]
-
-
-# =========================================================
-# FastAPI — startup: vectorize FAQs in background threads
+# FastAPI app
 # =========================================================
 
 app = FastAPI()
 
 
-def _run_vectorization():
-    """
-    Spawn a daemon thread per agent so vectorization (embedding API calls
-    + ChromaDB writes) never blocks the uvicorn startup or the event loop.
-    Each agent owns its own ChromaDB collection, so threads don't contend.
-    """
-    def vectorize(agent, name):
-        try:
-            print(f"[Startup] [{name}] Vectorization started...")
-            agent.vectorize_faqs(get_embedding)
-            print(f"[Startup] [{name}] Vectorization complete.")
-        except Exception as e:
-            print(f"[Startup] [{name}] Vectorization failed: {e}")
-
-    for agent, name in [
-        (activity_agent, "ActivityAgent"),
-        (booking_agent,  "BookingAgent"),
-    ]:
-        threading.Thread(target=vectorize, args=(agent, name), daemon=True).start()
-
-
 @app.on_event("startup")
 def startup():
-    _run_vectorization()
+    run_vectorization(
+        agents_to_vectorize=[
+            (activity_agent,      "ActivityAgent"),
+            (hotel_booking_agent, "HotelBookingAgent"),
+        ],
+        get_embedding_fn=get_embedding,
+    )
     print("[Startup] Application is ready. Vectorization running in background.")
 
 
 # =========================================================
-# Chat History Store
-# =========================================================
-
-HISTORY_DIR = "chat_history"
-os.makedirs(HISTORY_DIR, exist_ok=True)
-
-MAX_HISTORY = int(os.getenv("MAX_HISTORY", "20"))
-
-# Agents that have their own separate history track
-AGENT_KEYS = ("orchestrator", "activity", "booking", "general")
-
-
-def session_dir(session_id: str) -> str:
-    """Return the folder path for a session's history files."""
-    return os.path.join(HISTORY_DIR, session_id)
-
-
-def history_path(session_id: str, agent: str) -> str:
-    """Return the file path for a specific agent's history within a session."""
-    return os.path.join(session_dir(session_id), f"{agent}.json")
-
-
-def load_history(session_id: str, agent: str) -> list:
-    """Load history for a specific agent in a session."""
-    path = history_path(session_id, agent)
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return []
-
-
-def save_history(session_id: str, agent: str, history: list):
-    """Save (and trim) history for a specific agent in a session."""
-    if len(history) > MAX_HISTORY:
-        history = history[-MAX_HISTORY:]
-    os.makedirs(session_dir(session_id), exist_ok=True)
-    with open(history_path(session_id, agent), "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
-
-
-# =========================================================
-# Request Model
+# Request model
 # =========================================================
 
 class ChatRequest(BaseModel):
@@ -160,328 +61,72 @@ class ChatRequest(BaseModel):
 
 
 # =========================================================
-# Chat
+# Routes
 # =========================================================
 
 @app.post("/chat")
 def chat(
     request: ChatRequest,
-    x_session_id: Optional[str] = Header(default=None)
+    x_session_id: Optional[str] = Header(default=None),
 ):
     question = request.question.strip()
-
     if not question:
         return {"error": "Question cannot be empty"}
 
     session_id = x_session_id or str(uuid.uuid4())
 
-    # Load per-agent histories
-    orchestrator_history = load_history(session_id, "orchestrator")
-    activity_history     = load_history(session_id, "activity")
-    booking_history      = load_history(session_id, "booking")
-    general_history      = load_history(session_id, "general")
+    # Orchestrator: User Query + History → LLM → Agent Name
+    agent = orchestrator.classify(question, session_id)
 
-    print(
-        f"\nSession: {session_id} | "
-        f"orchestrator={len(orchestrator_history)} "
-        f"activity={len(activity_history)} "
-        f"booking={len(booking_history)} "
-        f"general={len(general_history)} | "
-        f"Question: {question}"
-    )
-
-    # ----------------------------------------------------------
-    # 1. Orchestrator — classify and route
-    #    Short-circuit to "booking" if a mid-flow booking exists
-    #    so plain inputs (names, dates, "yes/no") are never
-    #    misrouted by the LLM when the user is mid-flow.
-    # ----------------------------------------------------------
-
-    _booking_file        = booking_agent._booking_path(session_id)
-    active_booking_state = booking_agent.load_booking_state(session_id)
-    active_booking_step  = active_booking_state.get("step", "destination")
-    booking_is_active    = (
-        os.path.exists(_booking_file)
-        and active_booking_step not in ("confirmed", "cancelled")
-    )
-
-    if booking_is_active:
-        route = "booking"
-        print(f"[Orchestrator] Bypassed — active booking step='{active_booking_step}', routing to 'booking'")
-    else:
-        route = orchestrator.classify(question, orchestrator_history)
-
-    # Save orchestrator turn
-    orchestrator_history.append({"role": "user",      "content": question})
-    orchestrator_history.append({"role": "assistant",  "content": route})
-    save_history(session_id, "orchestrator", orchestrator_history)
-
-    print(f"[Orchestrator] Route selected: {route}")
-
-    # ----------------------------------------------------------
-    # 2. Booking agent — true streaming via stream_turn()
-    # ----------------------------------------------------------
-
-    if route == "booking":
-
-        def stream_booking() -> Generator[str, None, None]:
-            yield f"event: session\ndata: {json.dumps({'session_id': session_id})}\n\n"
-            yield f"event: route\ndata: {json.dumps({'agent': 'booking'})}\n\n"
-
-            full_reply = ""
-
-            for event in booking_agent.stream_turn(
-                session_id      = session_id,
-                user_message    = question,
-                history         = booking_history,
-                get_embedding_fn= get_embedding,
-                top_k           = RETRIEVAL_TOP_K,
-                threshold       = SIMILARITY_THRESHOLD,
-            ):
-                if event["type"] == "sources":
-                    yield f"event: sources\ndata: {json.dumps(event['data'])}\n\n"
-
-                elif event["type"] == "delta":
-                    full_reply += event["data"]
-                    yield f"event: answer\ndata: {json.dumps({'text': event['data']})}\n\n"
-
-                elif event["type"] == "booking_state":
-                    book_state = event["data"]
-                    yield f"event: booking_state\ndata: {json.dumps(book_state)}\n\n"
-                    print(
-                        f"[BookingAgent] Step={book_state['step']} | "
-                        f"confirmed={book_state.get('confirmed')} | "
-                        f"cancelled={book_state.get('cancelled')}"
-                    )
-
-                elif event["type"] == "done":
-                    booking_history.append({"role": "user",      "content": question})
-                    booking_history.append({"role": "assistant",  "content": event.get("clean_reply", full_reply)})
-                    save_history(session_id, "booking", booking_history)
-                    yield "event: done\ndata: {}\n\n"
-
-        return StreamingResponse(
-            stream_booking(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-        )
-
-    # ----------------------------------------------------------
-    # 3. Select FAQ agent and its history based on route
-    # ----------------------------------------------------------
-
-    if route == "activity":
-        agent         = activity_agent
-        agent_history = activity_history
-        agent_key     = "activity"
-    else:
-        # General / conversational — no RAG
-        agent         = None
-        agent_history = general_history
-        agent_key     = "general"
-
-    # ----------------------------------------------------------
-    # 4. Embed question and retrieve from the selected agent
-    # ----------------------------------------------------------
-
-    query_embedding = get_embedding(question)
-
-    documents, metadatas, ids = [], [], []
-
-    if agent is not None:
-        result = agent.retrieve(
-            query_embedding=query_embedding,
-            top_k=RETRIEVAL_TOP_K,
-            threshold=SIMILARITY_THRESHOLD
-        )
-        documents = result["documents"]
-        metadatas = result["metadatas"]
-        ids = result["ids"]
-
-    # ----------------------------------------------------------
-    # 5. Build context message for LLM
-    # ----------------------------------------------------------
-
-    if documents:
-        context = ""
-        for i, document in enumerate(documents):
-            context += f"\nFAQ {i + 1}:\n{document}\n"
-        current_message = (
-            f"FAQ CONTEXT:\n{context}\n"
-            f"USER QUESTION:\n{question}\n"
-            f"Answer the user using only the FAQ context."
-        )
-    else:
-        current_message = (
-            f"There is no FAQ context available for this question.\n"
-            f"Answer using the conversation history above.\n"
-            f"USER QUESTION:\n{question}"
-        )
-
-    # ----------------------------------------------------------
-    # 6. Pick system prompt from selected agent (or default)
-    # ----------------------------------------------------------
-
-    if agent is not None:
-        system_prompt = agent.get_system_prompt()
-    else:
-        with open("prompts/general_prompt.txt", "r", encoding="utf-8") as f:
-            system_prompt = f.read().strip()
-
-    # ----------------------------------------------------------
-    # 7. Sources payload for frontend
-    # ----------------------------------------------------------
-
-    sources_payload = json.dumps([
-        {
-            "id": ids[i],
-            "question": metadatas[i]["question"],
-            "category": metadatas[i]["category"]
-        }
-        for i in range(len(documents))
-    ])
-
-    # Add user question to agent history
-    agent_history.append({"role": "user", "content": question})
-    if len(agent_history) > MAX_HISTORY:
-        agent_history = agent_history[-MAX_HISTORY:]
-    save_history(session_id, agent_key, agent_history)
-
-    # ----------------------------------------------------------
-    # 8. Stream LLM response
-    # ----------------------------------------------------------
-
-    def stream_llm() -> Generator[str, None, None]:
-
+    def _with_preamble(agent_name: str, inner_gen):
+        """Prepend session + agent SSE events before the agent's own stream."""
         yield f"event: session\ndata: {json.dumps({'session_id': session_id})}\n\n"
-        yield f"event: route\ndata: {json.dumps({'agent': route})}\n\n"
-        yield f"event: sources\ndata: {sources_payload}\n\n"
+        yield f"event: agent\ndata: {json.dumps({'agent': agent_name})}\n\n"
+        yield from inner_gen
 
-        headers = {
-            "api-key": LLM_API_KEY,
-            "Authorization": f"Bearer {LLM_API_KEY}",
-            "Accept": "text/event-stream",
-            "Content-Type": "application/json"
-        }
-
-        messages = []
-        for msg in agent_history[:-1]:
-            messages.append({
-                "role": msg["role"],
-                "content": [{"type": "text", "text": msg["content"]}]
-            })
-        messages.append({
-            "role": "user",
-            "content": [{"type": "text", "text": current_message}]
-        })
-
-        print(f"\n[LLM] Sending {len(messages)} messages to LLM (agent={agent_key}):")
-        for m in messages:
-            preview = m["content"][0]["text"][:80].replace("\n", " ")
-            print(f"  [{m['role']}] {preview}...")
-
-        payload = {
-            "model_id": LLM_MODEL_ID,
-            "body": {
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": LLM_MAX_TOKENS,
-                "temperature": LLM_TEMPERATURE,
-                "top_k": LLM_TOP_K,
-                "system": system_prompt,
-                "messages": messages
-            }
-        }
-
-        full_answer = ""
-
-        with httpx.stream(
-            "POST",
-            LLM_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=120
-        ) as response:
-
-            if response.status_code != 200:
-                error_body = response.read().decode("utf-8", errors="replace")
-                print(f"LLM API error {response.status_code}: {error_body}")
-            response.raise_for_status()
-
-            for line in response.iter_lines():
-                if not line:
-                    continue
-
-                if line.startswith("data:"):
-                    raw = line[len("data:"):].strip()
-
-                    if raw == "[DONE]":
-                        break
-
-                    try:
-                        event_data = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-
-                    delta_text = None
-                    event_type = event_data.get("type", "")
-
-                    if event_type == "content_block_delta":
-                        delta_text = event_data.get("delta", {}).get("text", "")
-                    elif "text" in event_data:
-                        delta_text = event_data["text"]
-                    elif "content" in event_data:
-                        delta_text = event_data["content"]
-                    elif "message" in event_data:
-                        delta_text = event_data["message"]
-
-                    if delta_text:
-                        full_answer += delta_text
-                        yield f"event: answer\ndata: {json.dumps({'text': delta_text})}\n\n"
-
-        # Save assistant reply to this agent's history
-        agent_history.append({"role": "assistant", "content": full_answer})
-        save_history(session_id, agent_key, agent_history)
-        print(f"[HISTORY] Saved agent='{agent_key}'. Total messages: {len(agent_history)}")
-
-        yield "event: done\ndata: {}\n\n"
+    if agent == "HotelBookingAgent":
+        generator = _with_preamble(
+            "HotelBookingAgent",
+            hotel_booking_agent.stream_turn(
+                session_id=session_id,
+                user_message=question,
+                get_embedding_fn=get_embedding,
+            ),
+        )
+    elif agent == "ActivityAgent":
+        generator = _with_preamble(
+            "ActivityAgent",
+            activity_agent.stream_response(session_id, question),
+        )
+    else:
+        generator = _with_preamble(
+            "GeneralAgent",
+            general_agent.stream_response(session_id, question),
+        )
 
     return StreamingResponse(
-        stream_llm(),
+        generator,
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no"
-        }
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
-
-# =========================================================
-# Booking State
-# =========================================================
 
 @app.get("/booking/{session_id}")
 def get_booking_state(session_id: str):
     """Return the current hotel booking state for a session."""
-    state = booking_agent.load_booking_state(session_id)
+    state = hotel_booking_agent.load_booking_state(session_id)
     return {"session_id": session_id, "booking": state}
 
 
 @app.delete("/booking/{session_id}")
 def cancel_booking(session_id: str):
-    """
-    Clear / cancel the in-progress booking for a session.
-    Also clears the booking chat history.
-    """
-    booking_agent.clear_booking_state(session_id)
+    """Clear / cancel the in-progress booking for a session and its chat history."""
+    hotel_booking_agent.clear_booking_state(session_id)
     path = history_path(session_id, "booking")
     if os.path.exists(path):
         os.remove(path)
     return {"session_id": session_id, "booking_cleared": True}
 
-
-# =========================================================
-# History
-# =========================================================
 
 @app.get("/history/{session_id}")
 def get_history(session_id: str):
@@ -489,10 +134,7 @@ def get_history(session_id: str):
     result = {}
     for key in AGENT_KEYS:
         h = load_history(session_id, key)
-        result[key] = {
-            "message_count": len(h),
-            "history": h
-        }
+        result[key] = {"message_count": len(h), "history": h}
     return {"session_id": session_id, "agents": result}
 
 
@@ -528,20 +170,15 @@ def clear_agent_history(session_id: str, agent: str):
     return {"session_id": session_id, "agent": agent, "cleared": False}
 
 
-# =========================================================
-# Health
-# =========================================================
-
 @app.get("/health")
 def health():
-    # Each session is a subfolder inside HISTORY_DIR
     unique_sessions = [
         d for d in os.listdir(HISTORY_DIR)
         if os.path.isdir(os.path.join(HISTORY_DIR, d))
     ]
     return {
         "status": "ok",
-        "activity_faq_count": activity_agent.get_collection().count(),
-        "booking_faq_count": booking_agent.get_collection().count(),
-        "saved_sessions": len(unique_sessions)
+        "activity_faq_count":      activity_agent.get_collection().count(),
+        "hotel_booking_faq_count": hotel_booking_agent.get_collection().count(),
+        "saved_sessions":          len(unique_sessions),
     }

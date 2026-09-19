@@ -3,25 +3,32 @@ import re
 
 import httpx
 
+from core.history import load_history, save_history
+
 
 # =========================================================
 # Orchestrator
-# Builds the routing payload, calls the LLM API, and parses
-# the routing decision. main.py only calls classify().
+#
+# Single responsibility: classify the user's question and
+# return the appropriate agent name.
+#
+# Flow: User Query + Orchestrator History → LLM → Agent Name
+#
+# app.py calls classify() and dispatches to the named agent.
 # =========================================================
 
 
 class Orchestrator:
     def __init__(
         self,
-        prompt_file: str = "prompts/orchestrator_prompt.txt",
-        llm_api_url: str = "",
-        llm_api_key: str = "",
+        prompt_file:  str = "prompts/orchestrator_prompt.txt",
+        llm_api_url:  str = "",
+        llm_api_key:  str = "",
         llm_model_id: str = "",
     ):
-        self.prompt_file = prompt_file
-        self.llm_api_url = llm_api_url
-        self.llm_api_key = llm_api_key
+        self.prompt_file  = prompt_file
+        self.llm_api_url  = llm_api_url
+        self.llm_api_key  = llm_api_key
         self.llm_model_id = llm_model_id
 
     # ----------------------------------------------------------
@@ -41,11 +48,11 @@ class Orchestrator:
         messages = []
         for msg in history:
             messages.append({
-                "role": msg["role"],
+                "role":    msg["role"],
                 "content": [{"type": "text", "text": msg["content"]}],
             })
         messages.append({
-            "role": "user",
+            "role":    "user",
             "content": [{"type": "text", "text": question}],
         })
 
@@ -53,10 +60,10 @@ class Orchestrator:
             "model_id": self.llm_model_id,
             "body": {
                 "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 150,
+                "max_tokens":  150,
                 "temperature": 0.0,
-                "system": self._load_routing_prompt(),
-                "messages": messages,
+                "system":      self._load_routing_prompt(),
+                "messages":    messages,
             },
         }
 
@@ -66,44 +73,52 @@ class Orchestrator:
 
     def _parse_route(self, raw_text: str) -> str:
         """
-        Parse the raw LLM response text and return the routing decision.
-        Returns one of: "activity", "hotel", "booking", "general"
+        Parse the LLM response and return the agent class name.
+        Returns one of: "ActivityAgent", "HotelBookingAgent", "GeneralAgent"
         """
         text = raw_text.strip()
         print(f"[Orchestrator] Raw classification response: {text}")
 
-        # Strip markdown code fences if LLM wraps in ```json ... ```
         if text.startswith("```"):
             text = re.sub(r"^```[a-z]*\n?", "", text)
             text = re.sub(r"\n?```$", "", text).strip()
 
         try:
             parsed = json.loads(text)
-            agent = parsed.get("agent", "general").lower().strip()
+            agent  = parsed.get("agent", "GeneralAgent").strip()
             reason = parsed.get("reason", "")
             print(f"[Orchestrator] Routed to → '{agent}' | Reason: {reason}")
-            if agent in ("activity", "hotel", "booking"):
-                return agent
+
+            if agent in ("HotelBookingAgent", "booking"):
+                return "HotelBookingAgent"
+            if agent in ("ActivityAgent", "activity"):
+                return "ActivityAgent"
+            if agent in ("GeneralAgent", "general"):
+                return "GeneralAgent"
+
         except Exception as e:
-            print(f"[Orchestrator] Parse error: {e}. Defaulting to 'general'.")
+            print(f"[Orchestrator] Parse error: {e}. Defaulting to 'GeneralAgent'.")
 
-        return "general"
+        return "GeneralAgent"
 
     # ----------------------------------------------------------
-    # Public entry point — called by main.py
+    # Public entry point
     # ----------------------------------------------------------
 
-    def classify(self, question: str, history: list) -> str:
+    def classify(self, question: str, session_id: str) -> str:
         """
-        Call the LLM API to classify `question` and return the route.
-        Returns one of: "activity", "hotel", "booking", "general"
+        Load orchestrator history, send question to LLM for classification,
+        persist the turn, and return the agent class name.
+
+        Returns one of: "ActivityAgent", "HotelBookingAgent", "GeneralAgent"
         """
+        history = load_history(session_id, "orchestrator")
         payload = self._build_payload(question, history)
         headers = {
-            "api-key": self.llm_api_key,
+            "api-key":       self.llm_api_key,
             "Authorization": f"Bearer {self.llm_api_key}",
-            "Accept": "text/event-stream",
-            "Content-Type": "application/json",
+            "Accept":        "text/event-stream",
+            "Content-Type":  "application/json",
         }
 
         route_raw = ""
@@ -141,6 +156,14 @@ class Orchestrator:
                         route_raw += delta
 
         except Exception as e:
-            print(f"[Orchestrator] API call failed: {e}. Defaulting to 'general'.")
+            print(f"[Orchestrator] API call failed: {e}. Defaulting to 'GeneralAgent'.")
 
-        return self._parse_route(route_raw) if route_raw else "general"
+        agent = self._parse_route(route_raw) if route_raw else "GeneralAgent"
+
+        # Persist this classification turn
+        history.append({"role": "user",      "content": question})
+        history.append({"role": "assistant",  "content": agent})
+        save_history(session_id, "orchestrator", history)
+
+        print(f"[Orchestrator] Agent selected: {agent}")
+        return agent
